@@ -1,0 +1,158 @@
+# gloval setting
+#
+global:
+  namespace: vran
+  ceph:
+    monitors:
+      - 10.67.123.6:6789
+      - 10.67.123.5:6789
+      - 10.67.123.22:6789
+    user: yumin
+    path: "/volumes/_nogroup/yumin-pod1/fd8b7133-9d70-47f4-912f-43b05daf2c10"
+    secretRef:
+      name: ceph-secret-yumin
+  corepining:
+    enabled: true
+    cpumanager: intel
+  qoslabels: {}
+  affinity: {} 
+
+# parameter exposed for dev cloud integration
+devmode:
+  image:
+    repository: harbor.flexran.intel.com/flexran/flexran-dev
+    pullPolicy: IfNotPresent
+    tag: v1
+  extralabels: {}
+  cephfs: false
+
+vranNamespace: default 
+# vscode security context
+podlevel:
+  securityContext: 
+    runAsNonRoot: false
+    fsGroup: 0
+    runAsUser: 0
+  volumePermissions:
+    enabled: true
+    securityContext:
+      runAsUser: 0
+  image:
+    pullSecrets: {}
+  nodeSelector: { kubernetes.io/hostname: ubuntu2404 }
+  tolerations: []
+
+oneapi:
+  image: 
+    repository: harbor.flexran.intel.com/flexran/flexran-oneapi
+    pullPolicy: IfNotPresent
+    tag: v2024.1.0.596
+  command: "mount --bind /opt/intel/oneapi/ /home/intel/oneapi; sleep 2; tail -f /dev/null"
+
+ulimit:
+  image: 
+    repository: busybox
+    pullPolicy: IfNotPresent
+    tag: latest
+  command: "ulimit -l unlimited"
+
+chmoddata:
+  image: 
+    repository: busybox
+    pullPolicy: IfNotPresent
+    tag: latest
+  command: "chown -R 0:0 /home/coder"
+
+vscode:
+  image:
+    repository: codercom/code-server
+    pullPolicy: IfNotPresent
+    tag: 4.23.1
+  command: "tail -f /dev/null"
+  dt: true
+  password: "flexran@intel"
+  service:
+    type: NodePort
+    port: 8080
+  extraVars:
+    - name: HTTP_PROXY
+      value: "http://child-prc.intel.com:913"
+    - name: HTTPS_PROXY
+      value: "http://child-prc.intel.com:913"
+    - name: NO_PROXY
+      value: "localhost,127.0.0.1,.harbor.io,192.0.0.0/8,.rancher.io,.svc,.svc.cluster,.svc.cluster.loacl"
+  volumeMounts:
+    - nmae: home-volume
+      mountPath: /home/workspace
+      hostPath: "/home" 
+  persistence:
+    enabled: false
+    accessMode: ReadWriteOnce
+    size: 10Gi
+    annotations: {}
+  lifecycle:
+    enabled: false
+  extraVolumeMounts:
+  - name: home-volume
+    mountPath: /home/workspace
+    hostPath: "/home"
+    subPath: ""
+    readOnly: false
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+  ingress:
+    enabled: true
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+    hosts:
+      - host: code-server.example.loc
+        paths:
+          - /
+    ingressClassName: "nginx"
+      #tls:
+      #- secretName: devmode
+      #  hosts:
+      #    - code-server.example.loc
+  nameOverride: ""
+  fullnameOverride: ""
+  hostnameOverride: ""
+  priorityClassName: ""
+  resources: {}
+  extraSecretMounts: []
+  extraConfigmapMounts: []
+
+dev: 
+  resources:
+    limits:
+      cpu: '10'
+      memory: '24Gi'
+    requests:
+      cpu: '1'
+      memory: '24Gi'
+  command: "tail -f /dev/null"
+
+  podAnnotations: 
+    intel-cpu-policy: |-
+      [{
+        "container": "devmode-vscode",
+        "cpuAllocation": {
+          "sharedCpuPoolName": "sp1",
+          "sharedCpu": "20000",
+          "htPreference": "sibling",
+          "cpuPoolName": "pool1",
+          "dedicatedCpus": "2"
+        }
+      },{
+        "container": "devmode-main",
+        "cpuAllocation": {
+          "sharedCpuPoolName": "sp1",
+          "sharedCpu": "100000",
+          "htPreference": "sibling",
+          "cpuPoolName": "pool1",
+          "dedicatedCpus": "4"
+        }
+      }]
+  
+

@@ -1,0 +1,283 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name | quote }}
+  namespace: {{ .Release.Namespace | default "vran" }}
+  labels:
+    {{- include "devmode.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "devmode.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- if and .Values.global.corepining.enabled (eq .Values.global.corepining.cpumanager "intel") }}
+      annotations:
+        {{- range $key, $value := .Values.dev.podAnnotations }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+      {{- end }}
+      labels:
+        {{- include "devmode.selectorLabels" . | nindent 8 }}
+        {{- with .Values.global.qoslabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.podlevel.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podlevel.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        fsGroup: {{ .Values.podlevel.securityContext.fsGroup }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- tpl (toYaml .) . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.podlevel.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        #- name: "{{ .Chart.Name }}-ulimit"
+        #  image: "{{ .Values.ulimit.image.repository }}:{{ .Values.ulimit.image.tag | default .Chart.AppVersion }}"
+        #  imagePullPolicy: {{ .Values.ulimit.image.pullPolicy }}
+        #  command: [ "/bin/sh", "-c", "--" ]
+        #  args: [ "{{.Values.ulimit.command}}" ]
+        #  stdin: true
+        #  tty: true
+        #  securityContext:
+        #    allowPrivilegeEscalation: true
+        #    capabilities:
+        #      add: ["SYS_RESOURCE"]
+        - name: "{{ .Chart.Name }}-chmoddata"
+          image: "{{ .Values.chmoddata.image.repository }}:{{ .Values.chmoddata.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.chmoddata.image.pullPolicy }}
+          command: [ "/bin/sh", "-c", "--" ]
+          args: [ "{{.Values.chmoddata.command}}" ]
+          stdin: true
+          tty: true
+          securityContext:
+            runAsUser: {{ .Values.podlevel.volumePermissions.securityContext.runAsUser }}
+          volumeMounts:
+          - name: data
+            mountPath: /home/coder
+        - name: "{{ .Chart.Name }}-oneapi"
+          image: "{{ .Values.oneapi.image.repository }}:{{ .Values.oneapi.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.oneapi.image.pullPolicy }}
+          command: [ "/bin/sh", "-c", "--" ]
+          args: [ "{{.Values.oneapi.command}}" ]
+          stdin: true
+          tty: true
+          volumeMounts:
+          - name: oneapi
+            mountPath: /home/intel
+      containers:
+        - name: "{{ .Chart.Name }}-vscode"
+          {{- if .Values.vscode.hostnameOverride }}
+          hostname: {{ .Values.vscode.hostnameOverride }}
+          {{- end }}
+          securityContext:
+            runAsUser: {{ .Values.podlevel.securityContext.runAsUser }}
+          {{- if .Values.vscode.priorityClassName }}
+          priorityClassName: {{ .Values.vscode.priorityClassName }}
+          {{- end }}
+          image: "{{ .Values.vscode.image.repository }}:{{ .Values.vscode.image.tag | default "code-server" }}"
+          imagePullPolicy: {{ .Values.vscode.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http          
+          resources:
+            {{- toYaml .Values.vscode.resources | nindent 12 }}
+          env:
+          - name: HTTP_PROXY
+            value: "http://child-prc.intel.com:913"
+          - name: HTTPS_PROXY
+            value: "http://child-prc.intel.com:913"
+          - name: NO_PROXY
+            value: "localhost,127.0.0.1,.harbor.io,192.0.0.0/8,.rancher.io,.svc,.svc.cluster,.svc.cluster.loacl"
+          - name: PASSWORD
+            valueFrom:
+              secretKeyRef:
+                {{- if .Values.vscode.existingSecret }}
+                name: {{ .Values.vscode.existingSecret }}
+                {{- else }}
+                name: {{ .Release.Name | quote }}
+                {{- end }}
+                key: password
+          volumeMounts:
+            - name: data
+              mountPath: /home/coder
+            {{- range .Values.vscode.extraConfigmapMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath | default "" }}
+              readOnly: {{ .readOnly }}
+            {{- end }}
+            {{- range .Values.vscode.extraSecretMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath | default "" }}
+              readOnly: {{ .readOnly }}
+            {{- end }}
+            {{- range .Values.vscode.extraVolumeMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath | default "" }}
+              readOnly: {{ .readOnly }}
+            {{- end }}
+
+        - name: "{{ .Chart.Name }}-main"
+          image: "{{ .Values.devmode.image.repository }}:{{ .Values.devmode.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.devmode.image.pullPolicy }}
+          command: [ "/bin/bash", "-c", "--" ]
+          args: [ "{{ .Values.dev.command }}" ]
+          stdin: true
+          tty: true
+          securityContext:
+            runAsUser: {{ .Values.podlevel.securityContext.runAsUser }}
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            capabilities:
+              add: ["SYS_ADMIN", "SYS_PTRACE"]
+
+          env:
+          - name: LD_LIBRARY_PATH
+            value: /opt/oneapi/lib/intel64
+          resources:
+            limits:
+              #hugepages-1Gi: {{ .Values.dev.resources.limits.hugepages_1Gi }}
+              memory: {{ .Values.dev.resources.limits.memory }}
+            {{- if and .Values.global.corepining.enabled (eq .Values.global.corepining.cpumanager "native") }}
+              cpu: {{ .Values.dev.resources.limits.cpu }}
+            {{- end }}
+            requests:
+              #hugepages-1Gi: {{ .Values.dev.resources.requests.hugepages_1Gi }}
+              memory: {{ .Values.dev.resources.requests.memory }}
+            {{- if and .Values.global.corepining.enabled (eq .Values.global.corepining.cpumanager "native") }}
+              cpu: {{ .Values.dev.resources.requests.cpu }}
+            {{- end }}
+          volumeMounts:
+            {{- if and .Values.devmode.cephfs .Values.global.ceph }}
+            - name: cephfs
+              mountPath: /home/cephfs
+            {{- end }}
+            - name: sys
+              mountPath: /sys
+            - name: lib-modules
+              mountPath: /lib/modules
+            - name: usr-src
+              mountPath: /usr/src
+            - name: dev
+              mountPath: /dev
+            {{- if eq .Values.dev.dt "true"  }}
+            - name: root-netrc
+              mountPath: /root/.netrc
+              readOnly: false
+            - name: root-gitconfig
+              mountPath: /root/.gitconfig
+              readOnly: false
+            {{- end }}
+            #- name: hugepage
+            #  mountPath: /hugepages
+            - name: varrun
+              mountPath: /tmp/dpdk
+              readOnly: false
+            - name: oneapi
+              mountPath: /home/intel
+            - name: data
+              mountPath: /home/code          
+      volumes:
+      - name: oneapi
+        emptyDir: {}
+      - name: data
+        {{- if .Values.vscode.persistence.enabled }}
+        {{- if not .Values.vscode.persistence.hostPath }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.vscode.persistence.existingClaim | default "code-server" }}
+        {{- else }}
+        hostPath:
+          path: {{ .Values.vscode.persistence.hostPath }}
+          type: Directory
+        {{- end -}}
+        {{- else }}
+        emptyDir: {}
+        {{- end -}}
+      {{- range .Values.vscode.extraSecretMounts }}
+      - name: {{ .name }}
+        secret:
+          secretName: {{ .secretName }}
+          defaultMode: {{ .defaultMode }}
+      {{- end }}
+      {{- range .Values.vscode.extraConfigmapMounts }}
+      - name: {{ .name }}
+        configMap:
+          name: {{ .configMap }}
+          defaultMode: {{ .defaultMode }}
+      {{- end }}
+      {{- range .Values.vscode.extraVolumeMounts }}
+      - name: {{ .name }}
+        {{- if .existingClaim }}
+        persistentVolumeClaim:
+          claimName: {{ .existingClaim }}
+        {{- else }}
+        hostPath:
+          path: {{ .hostPath }}
+          type: Directory
+        {{- end }}
+      {{- end }}
+      {{- if and .Values.devmode.cephfs .Values.global.ceph }}
+      - name: cephfs
+        cephfs:
+        {{- with .Values.global.ceph -}}
+          {{ toYaml . | nindent 10 }}
+        {{- end -}}
+      {{- end }}
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+      - name: lib-modules
+        hostPath:
+          path: /lib/modules
+          type: Directory
+      - name: usr-src
+        hostPath:
+          path: /usr/src
+          type: Directory
+      - name: dev
+        hostPath:
+          path: /dev
+          type: Directory
+      {{- if eq .Values.dev.dt "true"  }}
+      - name: root-netrc
+        hostPath:
+          path: /root/.netrc
+          type: File
+      - name: root-gitconfig
+        hostPath:
+          path: /root/.gitconfig
+          type: File
+      {{- end }}
+      #- name: hugepage
+      #  emptyDir:
+      #    medium: HugePages
+      - name: varrun
+        emptyDir: {}

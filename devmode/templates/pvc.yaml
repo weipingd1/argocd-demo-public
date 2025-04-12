@@ -1,0 +1,26 @@
+{{- if and (and .Values.vscode.persistence.enabled (not .Values.vscode.persistence.existingClaim)) (not .Values.vscode.persistence.hostPath) }}
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: {{ include "devmode.fullname" . }}
+  namespace: {{ .Values.vranNamespace | default "vran" }}
+{{- with .Values.vscode.persistence.annotations  }}
+  annotations:
+{{ toYaml . | indent 4 }}
+{{- end }}
+  labels:
+    {{- include "devmode.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.vscode.persistence.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.vscode.persistence.size | quote }}
+{{- if .Values.vscode.persistence.storageClass }}
+{{- if (eq "-" .Values.vscode.persistence.storageClass) }}
+  storageClassName: ""
+{{- else }}
+  storageClassName: "{{ .Values.vscode.persistence.storageClass }}"
+{{- end }}
+{{- end }}
+{{- end }}

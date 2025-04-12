@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vscode-code-server
+  namespace: {{ .Release.Namespace | default "vran" }}
+  labels:
+    {{- include "devmode.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.vscode.service.type }}
+  ports:
+    - port: {{ .Values.vscode.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  {{- range .Values.vscode.extraPorts }}
+    - port: {{ .port }}
+      targetPort: {{ .port }}
+      protocol: {{ .protocol }}
+      name: {{ .name }}
+  {{- end }}
+  selector:
+    {{- include "devmode.selectorLabels" . | nindent 4 }}
